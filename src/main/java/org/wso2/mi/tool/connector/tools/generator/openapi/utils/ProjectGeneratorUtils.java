@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2024, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -57,6 +57,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 
 /**
  * The VelocityConfigGenerator handles the generation of the openapi connector
@@ -93,10 +94,11 @@ public class ProjectGeneratorUtils {
                 String pathToMainDir = pathToConnectorDir +
                         "/src/main/java/org/wso2/carbon/" + connectorName + "connector";
                 String pathToResourcesDir = pathToConnectorDir + "/src/main/resources";
-                createConnectorDirectory(pathToConnectorDir, pathToMainDir, pathToResourcesDir,
-                        context.get("connectorName").toString());
-                copyConnectorStaticFiles(pathToConnectorDir, pathToResourcesDir);
-                componentsSchema = openAPI.getComponents().getSchemas();
+                createConnectorDirectory(pathToConnectorDir, pathToMainDir, pathToResourcesDir, connectorName);
+                copyConnectorStaticFiles(pathToConnectorDir, pathToResourcesDir, pathToMainDir);
+                if (openAPI.getComponents() != null) {
+                    componentsSchema = openAPI.getComponents().getSchemas();
+                }
                 readOpenAPISpecification(openAPI, pathToResourcesDir);
                 operationList.sort(Comparator.comparing(Operation::getName));
                 context.put("operations", operationList);
@@ -146,7 +148,7 @@ public class ProjectGeneratorUtils {
         }
     }
 
-    private static void copyConnectorStaticFiles(String pathToConnectorDir, String pathToResourcesDir) throws IOException {
+    private static void copyConnectorStaticFiles(String pathToConnectorDir, String pathToResourcesDir,String pathToMainDir) throws IOException {
 
         ClassLoader classLoader = ProjectGeneratorUtils.class.getClassLoader();
         String artifactId = (String) context.get("artifactId");
@@ -160,18 +162,52 @@ public class ProjectGeneratorUtils {
                 Files.copy(staticFilesStream, Paths.get(pathToConnectorDir + "/src/main/assembly/assemble-connector.xml"), StandardCopyOption.REPLACE_EXISTING);
             }
         }
-
         // Determine the template based on the auth type
         String auth = (String) context.get("auth");
-        String outputFile = pathToResourcesDir + "/config/init.xml";
+        String oauth2flow = (String) context.get("oauth2flow");
+        String outputFile;
         String template;
-        if (auth.equalsIgnoreCase("oauth2")) {
-            template = "templates/auth/init_template.vm";
+        if (auth.equalsIgnoreCase("oauth2") && oauth2flow.equalsIgnoreCase("client_credentials")) {
+            String[][] oauth2Templates = {
+                    {"templates/java/in_memory_token_store_template.vm", "/InMemoryTokenStore.java"},
+                    {"templates/java/token_store_template.vm", "/TokenStore.java"},
+                    {"templates/java/client_credentials_token_handler_template.vm", "/ClientCredentialsTokenHandler" +
+                            ".java"},
+                    {"templates/java/token_manager_template.vm", "/TokenManager.java"},
+                    {"templates/java/token_template.vm", "/Token.java"},
+                    {"templates/java/constants_template.vm", "/Constants.java"}
+            };
+
+            for (String[] entry : oauth2Templates) {
+                template = entry[0];
+                outputFile = pathToMainDir + entry[1];
+                mergeVelocityTemplate(outputFile, template);
+            }
+            template = "templates/auth/init_oauth2_client_credentials_template.vm";
+        } else if (auth.equalsIgnoreCase("oauth2") && oauth2flow.equalsIgnoreCase("authorization_code")) {
+            String[][] oauth2AuthCodeTemplates = {
+                    {"templates/java/in_memory_token_store_template.vm", "/InMemoryTokenStore.java"},
+                    {"templates/java/token_store_template.vm", "/TokenStore.java"},
+                    {"templates/java/token_manager_template.vm", "/TokenManager.java"},
+                    {"templates/java/token_template.vm", "/Token.java"},
+                    {"templates/java/constants_template.vm", "/Constants.java"},
+                    {"templates/java/authorization_code_token_handler_template.vm", "/AuthorizationCodeTokenHandler.java"}
+            };
+
+            for (String[] entry : oauth2AuthCodeTemplates) {
+                template = entry[0];
+                outputFile = pathToMainDir + entry[1];
+                mergeVelocityTemplate(outputFile, template);
+            }
+            template = "templates/auth/init_oauth2_authorization_code_template.vm";
         } else if (auth.equalsIgnoreCase("basic")) {
             template = "templates/auth/init_basic_auth_template.vm";
+        } else if (auth.equalsIgnoreCase("apiKey")) {
+            template = "templates/auth/init_api_key_template.vm";
         } else {
             template = "templates/auth/init_no_auth_template.vm";
         }
+        outputFile = pathToResourcesDir + "/config/init.xml";
         mergeVelocityTemplate(outputFile, template);
 
         // Copy icon directory
@@ -218,10 +254,15 @@ public class ProjectGeneratorUtils {
         mergeVelocityTemplate(outputFile, template);
 
         String auth = (String) context.get("auth");
-        if (auth.equalsIgnoreCase("oauth2")) {
-            generateAuthFiles(pathToResourcesDir);
+        String oAuth2Flow = (String) context.get("oauth2flow");
+        if (auth.equalsIgnoreCase("oauth2") && oAuth2Flow.equalsIgnoreCase("client_credentials")) {
+            generateOAuth2Files(pathToResourcesDir);
+        } else if (auth.equalsIgnoreCase("oauth2") && oAuth2Flow.equalsIgnoreCase("authorization_code")) {
+            generateOAuth2AuthorizationCodeFiles(pathToResourcesDir);
         } else if (auth.equalsIgnoreCase("basic")) {
             generateBasicAuthFiles(pathToResourcesDir);
+        } else if (auth.equalsIgnoreCase("apiKey")) {
+            generateApiKeyAuthFiles(pathToResourcesDir);
         } else {
             generateNoAuthFiles(pathToResourcesDir);
         }
@@ -240,16 +281,13 @@ public class ProjectGeneratorUtils {
         FileUtils.copyFileToDirectory(new File(openAPISpecificationPath), new File(genResourcesPath));
     }
 
-    private static void generateAuthFiles(String pathToResourcesDir) throws IOException {
-
+    private static void generateOAuth2Files(String pathToResourcesDir) throws IOException {
         String outputFile = pathToResourcesDir + "/uischema/init.json";
-        String template = "templates/uischema/init_template.vm";
+        String template = "templates/uischema/init_oauth2_client_credentials_template.vm";
         mergeVelocityTemplate(outputFile, template);
-
     }
 
     private static void generateNoAuthFiles(String pathToResourcesDir) throws IOException {
-
         String outputFile = pathToResourcesDir + "/uischema/init.json";
         String template = "templates/uischema/init_no_auth_template.vm";
         mergeVelocityTemplate(outputFile, template);
@@ -273,6 +311,18 @@ public class ProjectGeneratorUtils {
         String utilFile = pathToMainDir + "/Utils.java";
         String utilTemplate = "templates/java/utils_template.vm";
         mergeVelocityTemplate(utilFile, utilTemplate);
+    }
+
+    private static void generateApiKeyAuthFiles(String pathToResourcesDir) throws IOException {
+        String outputFile = pathToResourcesDir + "/uischema/init.json";
+        String template = "templates/uischema/init_api_key_auth_template.vm";
+        mergeVelocityTemplate(outputFile, template);
+    }
+
+    private static void generateOAuth2AuthorizationCodeFiles(String pathToResourcesDir) throws IOException {
+        String outputFile = pathToResourcesDir + "/uischema/init.json";
+        String template = "templates/uischema/init_oauth2_authorization_code_template.vm";
+        mergeVelocityTemplate(outputFile, template);
     }
 
     private static void generateDocs(String pathToConnectorDir) throws IOException {
@@ -510,8 +560,15 @@ public class ProjectGeneratorUtils {
             Map<String, Schema> properties = schema.getProperties();
             if (properties != null) {
                 for (Map.Entry<String, Schema> property : properties.entrySet()) {
-                    String propName = property.getValue().getXml() != null ? property.getValue().getXml().getName() :
-                            property.getKey();
+                    String propName;
+                    if (property.getValue() != null && property.getValue().getXml() != null
+                            && property.getValue().getXml().getName() != null) {
+                        propName = property.getValue().getXml().getName();
+                    } else if (property.getKey() != null) {
+                        propName = property.getKey();
+                    } else {
+                        propName = "unknown_property_" + UUID.randomUUID().toString();
+                    }
                     String propDescription = property.getValue().getDescription() != null ?
                             property.getValue().getDescription() + " Type: " + property.getValue().getType() :
                             " Type: " + property.getValue().getType();
@@ -545,22 +602,47 @@ public class ProjectGeneratorUtils {
     private static VelocityContext createVelocityContext(OpenAPI openAPI) {
         context = new VelocityContext();
         initVelocityEngine();
-        String connectorName = openAPI.getInfo().getTitle();
+        String connectorName = makePackageNameCompatible(openAPI.getInfo().getTitle());
         if (StringUtils.isEmpty(connectorName)) {
             connectorName = "MIConnector";
         }
         context.put("connectorName", connectorName);
+        context.put("defaultUrl", openAPI.getServers().get(0).getUrl());
         String resolvedConnectorName = connectorName.toLowerCase().replace(" ", "");
         String artifactId = "org.wso2.mi.connector." + resolvedConnectorName;
         context.put("artifactId", artifactId);
-        context.put("auth", "none"); //TODO: improve this
+
+        if (openAPI.getComponents() != null && openAPI.getComponents().getSecuritySchemes() != null) {
+            if (openAPI.getComponents().getSecuritySchemes().containsKey("oauth2")) {
+                if (openAPI.getComponents().getSecuritySchemes().get("oauth2").getFlows().getClientCredentials() != null) {
+                    context.put("auth", "oauth2");
+                    context.put("oauth2flow", "client_credentials");
+                } else if (openAPI.getComponents().getSecuritySchemes().get("oauth2").getFlows().getAuthorizationCode() != null) {
+                    context.put("auth", "oauth2");
+                    context.put("oauth2flow", "authorization_code");
+                } else {
+                    context.put("auth", "noauth");
+                }
+            } else if (openAPI.getComponents().getSecuritySchemes().containsKey("basic")) {
+                context.put("auth", "basic");
+            } else if (openAPI.getComponents().getSecuritySchemes().containsKey("apiKey")) {
+                context.put("auth", "apiKey");
+                context.put("apiKeyName", openAPI.getComponents().getSecuritySchemes().get("apiKey").getName());
+                context.put("apiKeyIn", openAPI.getComponents().getSecuritySchemes().get("apiKey").getIn());
+            } else {
+                context.put("auth", "noauth");
+            }
+        } else {
+            context.put("auth", "noauth");
+        }
+
         context.put("version", "1.0.0");
         context.put("groupId", "org.wso2.mi.connector");
         context.put("connectorName", resolvedConnectorName);
         return context;
     }
-
-    private static void responseSchemaToFile(Schema responseSchema, String filePath) {
-
+    private static String makePackageNameCompatible(String name) {
+        return name.replaceAll("[^a-zA-Z0-9]", "_").toLowerCase();
     }
+    
 }
